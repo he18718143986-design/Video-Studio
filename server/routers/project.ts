@@ -1,9 +1,11 @@
 import { z } from 'zod';
+import { TRPCError } from '@trpc/server';
 import { router, protectedProcedure } from '../trpc';
 import { supabaseAdmin } from '@/lib/supabase';
 import { startPipeline, triggerRefinement, retryFromStep } from '@/services/workflow';
 import { preflightCheck, getAvailableProvidersFromKeys } from '@/services/modelRegistry';
 import { decrypt } from '@/lib/encryption';
+import { checkUserQuota } from '@/services/quota';
 import type { Provider } from '@/lib/types';
 
 export const projectRouter = router({
@@ -19,6 +21,11 @@ export const projectRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
+      const quota = await checkUserQuota(ctx.user.id);
+      if (!quota.allowed) {
+        throw new TRPCError({ code: 'TOO_MANY_REQUESTS', message: quota.reason ?? 'Quota exceeded' });
+      }
+
       const { data, error } = await supabaseAdmin.from('projects').insert({
         user_id: ctx.user.id,
         title: input.title,
@@ -174,5 +181,11 @@ export const projectRouter = router({
       const modelPlan = preflightCheck(availableProviders);
 
       return modelPlan;
+    }),
+
+  quota: protectedProcedure
+    .query(async ({ ctx }) => {
+      const quota = await checkUserQuota(ctx.user.id);
+      return quota;
     }),
 });
