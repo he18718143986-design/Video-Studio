@@ -25,6 +25,12 @@ function checkRateLimit(key: string, limit: { maxRequests: number; windowMs: num
     return { allowed: true, remaining: limit.maxRequests - 1 };
   }
 
+  if (now > entry.resetTime) {
+    entry.count = 1;
+    entry.resetTime = now + limit.windowMs;
+    return { allowed: true, remaining: limit.maxRequests - 1 };
+  }
+
   entry.count++;
   if (entry.count > limit.maxRequests) {
     return { allowed: false, remaining: 0 };
@@ -32,13 +38,13 @@ function checkRateLimit(key: string, limit: { maxRequests: number; windowMs: num
   return { allowed: true, remaining: limit.maxRequests - entry.count };
 }
 
-if (typeof globalThis !== 'undefined') {
-  setInterval(() => {
-    const now = Date.now();
+function cleanupExpiredEntries() {
+  const now = Date.now();
+  if (RATE_LIMIT_MAP.size > 10000) {
     for (const [key, value] of RATE_LIMIT_MAP) {
       if (now > value.resetTime) RATE_LIMIT_MAP.delete(key);
     }
-  }, 60_000);
+  }
 }
 
 export async function middleware(request: NextRequest) {
@@ -52,6 +58,8 @@ export async function middleware(request: NextRequest) {
   }
 
   if (pathname.startsWith('/api/')) {
+    cleanupExpiredEntries();
+
     const ip = getRateLimitKey(request);
     const isAuthPath = pathname === '/login' || pathname === '/register';
     const limit = isAuthPath ? AUTH_RATE_LIMIT : API_RATE_LIMIT;
@@ -78,45 +86,58 @@ export async function middleware(request: NextRequest) {
     }
   }
 
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  if (!supabaseUrl || !supabaseAnonKey) {
+    if (!isPublicPath) {
+      const loginUrl = new URL('/login', request.url);
+      return NextResponse.redirect(loginUrl);
+    }
+    return NextResponse.next();
+  }
+
   let response = NextResponse.next({
     request: { headers: request.headers },
   });
 
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL ?? '',
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? '',
-    {
-      cookies: {
-        getAll() {
-          return request.cookies.getAll();
-        },
-        setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value }) =>
-            request.cookies.set(name, value)
-          );
-          response = NextResponse.next({
-            request: { headers: request.headers },
-          });
-          cookiesToSet.forEach(({ name, value, options }) =>
-            response.cookies.set(name, value, options)
-          );
-        },
+  const supabase = createServerClient(supabaseUrl, supabaseAnonKey, {
+    cookies: {
+      getAll() {
+        return request.cookies.getAll();
       },
+      setAll(cookiesToSet) {
+        cookiesToSet.forEach(({ name, value }) =>
+          request.cookies.set(name, value)
+        );
+        response = NextResponse.next({
+          request: { headers: request.headers },
+        });
+        cookiesToSet.forEach(({ name, value, options }) =>
+          response.cookies.set(name, value, options)
+        );
+      },
+    },
+  });
+
+  try {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user && !isPublicPath) {
+      const loginUrl = new URL('/login', request.url);
+      loginUrl.searchParams.set('redirect', pathname);
+      return NextResponse.redirect(loginUrl);
     }
-  );
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user && !isPublicPath) {
-    const loginUrl = new URL('/login', request.url);
-    loginUrl.searchParams.set('redirect', pathname);
-    return NextResponse.redirect(loginUrl);
-  }
-
-  if (user && (pathname === '/login' || pathname === '/register')) {
-    return NextResponse.redirect(new URL('/dashboard', request.url));
+    if (user && (pathname === '/login' || pathname === '/register')) {
+      return NextResponse.redirect(new URL('/dashboard', request.url));
+    }
+  } catch {
+    if (!isPublicPath) {
+      return NextResponse.redirect(new URL('/login', request.url));
+    }
   }
 
   return response;
