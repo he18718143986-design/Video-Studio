@@ -10,6 +10,7 @@ An AI-powered web application that generates science animation videos by analyzi
 - **Real-time Progress**: Server-Sent Events for live pipeline tracking
 - **Cost Tracking**: Per-step cost monitoring with Langfuse integration
 - **Multi-language**: English and Chinese support with auto-detection
+- **Production Ready**: Rate limiting, user quotas, Docker deployment, health checks
 
 ## Prerequisites
 
@@ -125,45 +126,196 @@ i18n/                   # Internationalization files
 supabase/               # Database migrations
 ```
 
-## Production Deployment
+---
 
-### Vercel (Frontend)
+## Production Deployment (Multi-User)
+
+Below is a complete guide to deploy SciVid AI for many users.
+
+### Deployment Architecture
+
+```
+Users (Browser)
+    │
+    ▼
+┌──────────────┐     ┌───────────────┐
+│   Vercel /   │────▶│   Supabase    │
+│   Docker     │     │  (DB + Auth)  │
+│  (Next.js)   │     └───────────────┘
+└──────┬───────┘
+       │
+       ├────▶ Google Cloud Storage (assets)
+       ├────▶ Inngest Cloud (workflow)
+       ├────▶ Google AI / OpenAI / Anthropic (AI)
+       └────▶ Langfuse (observability)
+```
+
+### Option A: Deploy to Vercel (Simplest)
 
 ```bash
+# Install Vercel CLI
+npm install -g vercel
+
+# Deploy
 vercel --prod
 ```
 
-Set all environment variables in Vercel dashboard.
+Then in the Vercel dashboard:
+1. Go to **Settings > Environment Variables**
+2. Add all variables from `.env.example`
+3. Redeploy
 
-### Railway (Backend / Inngest)
+**Pros**: Zero-config scaling, global CDN, automatic HTTPS
+**Cons**: Serverless function timeout (60s on Pro), may not suit long video renders
 
-1. Connect GitHub repository
-2. Set environment variables
-3. Deploy
+### Option B: Deploy with Docker (Full Control)
 
-### Environment Checklist
+```bash
+# Build and start all services
+docker compose up -d --build
 
-- [ ] Supabase project created and configured
-- [ ] Database migrations applied
-- [ ] RLS policies active
-- [ ] GCS bucket created with CORS configured
-- [ ] Service account key for GCS
-- [ ] At least Google AI API key configured
-- [ ] ENCRYPTION_KEY generated (`openssl rand -hex 32`)
-- [ ] Inngest configured (cloud or self-hosted)
-- [ ] Langfuse configured (optional, for observability)
-- [ ] Supabase Realtime enabled for `pipeline_events` and `projects` tables
+# View logs
+docker compose logs -f app
+```
 
-## Cost Estimates
+This starts:
+- **app** (port 3000): Next.js application
+- **inngest** (port 8288): Workflow engine
+- **redis** (port 6379): Cache and queues
 
-| Component | Approx. Cost per Video |
-|-----------|----------------------|
-| Text reasoning (script, storyboard) | $0.05 - $0.15 |
-| Image generation (keyframes) | $0.30 - $0.60 |
-| Video generation (Veo Fast) | $1.00 - $2.00 |
-| TTS (Gemini) | $0.01 - $0.05 |
-| **Total (Fast mode)** | **~$1.50 - $3.00** |
-| **Total (High mode)** | **~$4.00 - $8.00** |
+For cloud VPS deployment (AWS EC2, DigitalOcean, Hetzner):
+
+```bash
+# On your server
+git clone <repo-url>
+cd ai-science-video-generator
+cp .env.example .env
+# Edit .env with production values
+
+docker compose up -d --build
+```
+
+### Option C: Railway / Fly.io
+
+**Railway:**
+1. Connect GitHub repository at [railway.app](https://railway.app)
+2. Railway auto-detects the Dockerfile
+3. Set environment variables in the dashboard
+4. Deploy
+
+**Fly.io:**
+```bash
+fly launch
+fly secrets set GOOGLE_AI_API_KEY=xxx NEXT_PUBLIC_SUPABASE_URL=xxx ...
+fly deploy
+```
+
+### API Key Management: Two Modes
+
+#### Mode 1: Users bring their own keys (BYOK)
+- Each user enters API keys in `/settings`
+- Keys are encrypted with AES-256-GCM and stored per-user
+- Best for: developer-oriented platforms, cost transparency
+
+#### Mode 2: Platform provides shared keys (Recommended for public use)
+- Admin sets API keys in server `.env` (e.g., `GOOGLE_AI_API_KEY=xxx`)
+- All users share the platform's keys automatically
+- Users can still override with their own keys in `/settings`
+- Best for: SaaS products, team tools, public demos
+
+To enable Mode 2, simply set the AI provider keys in your `.env`:
+```bash
+GOOGLE_AI_API_KEY=your-platform-key
+OPENAI_API_KEY=your-platform-key       # optional
+ANTHROPIC_API_KEY=your-platform-key     # optional
+```
+
+### User Quota System
+
+Prevent abuse with configurable per-user limits:
+
+```bash
+# .env
+QUOTA_MAX_PROJECTS_PER_DAY=5       # Max projects created per day
+QUOTA_MAX_PROJECTS_TOTAL=50        # Max total projects per user
+QUOTA_MAX_COST_PER_PROJECT=10      # Max $ spent on a single project
+QUOTA_MAX_COST_PER_DAY=20          # Max $ spent per day
+QUOTA_MAX_COST_PER_MONTH=100       # Max $ spent per month
+```
+
+The system automatically blocks new project creation when quotas are exceeded and shows clear error messages to users.
+
+### Rate Limiting
+
+Built-in IP-based rate limiting:
+- **API endpoints**: 120 requests/minute
+- **Auth endpoints**: 15 requests/minute
+- Returns `429 Too Many Requests` with `Retry-After` header
+
+### Health Check
+
+Monitor your deployment:
+```bash
+curl https://your-domain.com/api/health
+```
+
+Returns:
+```json
+{
+  "status": "healthy",
+  "timestamp": "2026-03-08T...",
+  "checks": {
+    "supabase": { "status": "ok", "latencyMs": 45 },
+    "google_ai": { "status": "ok" },
+    "encryption": { "status": "ok" },
+    "ffmpeg": { "status": "ok", "message": "ffmpeg version 6.1..." }
+  }
+}
+```
+
+### Supabase Production Setup
+
+1. **Upgrade to Pro** ($25/month) for production workloads:
+   - 8 GB database
+   - 100 GB storage
+   - No auto-pause
+   - Daily backups
+
+2. **Enable Realtime** for `pipeline_events` and `projects` tables
+
+3. **Configure Google OAuth**:
+   - Supabase Dashboard > Authentication > Providers > Google
+   - Enter your Google OAuth client ID and secret
+
+### Security Checklist
+
+- [ ] Generate a unique `ENCRYPTION_KEY` with `openssl rand -hex 32`
+- [ ] Use Supabase Pro (no auto-pause, backups enabled)
+- [ ] Set strong database password
+- [ ] Enable RLS on all tables (migration already includes this)
+- [ ] Configure custom domain with HTTPS
+- [ ] Set `NEXT_PUBLIC_APP_URL` to your production domain
+- [ ] Review and adjust quota limits for your use case
+
+### Cost Estimates
+
+| Component | Per Video | 100 users/month (est.) |
+|-----------|----------|----------------------|
+| AI calls (Fast) | $1.50 - $3.00 | $150 - $300 |
+| AI calls (High) | $4.00 - $8.00 | $400 - $800 |
+| Supabase Pro | — | $25/month |
+| GCS Storage | — | $5 - $20/month |
+| Vercel Pro | — | $20/month |
+| Inngest Cloud | — | Free tier or $25/month |
+| **Total platform** | — | **$50 - $70/month + AI costs** |
+
+### Scaling Tips
+
+1. **AI costs are the primary expense** — use quota limits to control spending
+2. **GCS is cheap** — video storage costs are minimal
+3. **Supabase scales well** — Pro tier handles thousands of users
+4. **Consider caching** — StyleDNA results are cached by video hash (7-day TTL)
+5. **Monitor with Langfuse** — track cost per user, per step, per model
 
 ## License
 

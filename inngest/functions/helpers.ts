@@ -20,19 +20,29 @@ export async function getUserProviders(projectId: string): Promise<{
 }> {
   const project = await getProjectData(projectId);
 
+  const apiKeys: Record<string, string> = {};
+
+  // Platform-level keys from environment (admin-configured, shared by all users)
+  if (process.env.GOOGLE_AI_API_KEY) apiKeys['google'] = process.env.GOOGLE_AI_API_KEY;
+  if (process.env.OPENAI_API_KEY) apiKeys['openai'] = process.env.OPENAI_API_KEY;
+  if (process.env.ANTHROPIC_API_KEY) apiKeys['anthropic'] = process.env.ANTHROPIC_API_KEY;
+  if (process.env.ELEVENLABS_API_KEY) apiKeys['elevenlabs'] = process.env.ELEVENLABS_API_KEY;
+  if (process.env.STABILITY_API_KEY) apiKeys['stability'] = process.env.STABILITY_API_KEY;
+  if (process.env.KLING_API_KEY) apiKeys['kling'] = process.env.KLING_API_KEY;
+  if (process.env.RUNWAY_API_KEY) apiKeys['runway'] = process.env.RUNWAY_API_KEY;
+
+  // User-level keys override platform keys (user can bring their own)
   const { data: keys } = await supabaseAdmin
     .from('user_api_keys')
     .select('provider, encrypted_key')
     .eq('user_id', project.user_id);
-
-  const apiKeys: Record<string, string> = {};
 
   if (keys) {
     for (const key of keys) {
       try {
         apiKeys[key.provider] = decrypt(key.encrypted_key);
       } catch {
-        // Skip invalid keys
+        // Skip invalid keys, platform key remains as fallback
       }
     }
   }
