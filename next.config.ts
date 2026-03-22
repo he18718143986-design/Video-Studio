@@ -1,7 +1,10 @@
 import type { NextConfig } from "next";
 
+const isStandalone = process.env.DOCKER_BUILD === '1';
+
 const nextConfig: NextConfig = {
-  output: 'standalone',
+  ...(isStandalone ? { output: 'standalone' } : {}),
+
   serverExternalPackages: ['fluent-ffmpeg', '@google-cloud/storage'],
 
   images: {
@@ -39,16 +42,6 @@ const nextConfig: NextConfig = {
         ],
       },
     ];
-  },
-
-  experimental: {
-    serverActions: {
-      bodySizeLimit: '500mb',
-    },
-  },
-
-  typescript: {
-    ignoreBuildErrors: false,
   },
 };
 
