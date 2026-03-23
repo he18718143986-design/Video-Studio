@@ -63,9 +63,18 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     state.setProjectId(projectId);
     state.setConnected(true);
 
-    const eventSource = new EventSource(`/api/sse/${projectId}`);
+    let eventSource: EventSource | null = null;
 
-    eventSource.onmessage = (event) => {
+    const open = () => {
+      if (eventSource) {
+        eventSource.close();
+        eventSource = null;
+      }
+      eventSource = new EventSource(`/api/sse/${projectId}`);
+
+      const es = eventSource;
+
+      es.onmessage = (event) => {
       try {
         const parsed = JSON.parse(event.data) as SSEEvent;
         const currentState = get();
@@ -112,19 +121,29 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       }
     };
 
-    eventSource.onerror = () => {
-      const currentState = get();
-      currentState.setConnected(false);
-      setTimeout(() => {
-        const latestState = get();
-        if (latestState.projectId === projectId) {
-          latestState.connectSSE(projectId);
+      es.onerror = () => {
+        const currentState = get();
+        currentState.setConnected(false);
+        if (eventSource) {
+          eventSource.close();
+          eventSource = null;
         }
-      }, 3000);
+        setTimeout(() => {
+          const latestState = get();
+          if (latestState.projectId === projectId) {
+            open();
+          }
+        }, 3000);
+      };
     };
 
+    open();
+
     return () => {
-      eventSource.close();
+      if (eventSource) {
+        eventSource.close();
+        eventSource = null;
+      }
       set({ isConnected: false });
     };
   },
