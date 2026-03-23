@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
@@ -27,7 +27,7 @@ export default function NewProjectPage() {
   const [error, setError] = useState<string | null>(null);
 
   const router = useRouter();
-  const supabase = createBrowserSupabaseClient();
+  const supabase = useMemo(() => createBrowserSupabaseClient(), []);
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -48,6 +48,7 @@ export default function NewProjectPage() {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) {
+        setCreating(false);
         router.push('/login');
         return;
       }
@@ -95,6 +96,7 @@ export default function NewProjectPage() {
       }
 
       router.push(`/projects/${project.id}`);
+      setCreating(false);
     } catch (err) {
       setError(String(err));
       setCreating(false);
