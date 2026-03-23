@@ -1,8 +1,8 @@
 'use client';
 
-import { useEffect, useState, use } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -33,14 +33,14 @@ interface ProjectData {
   error_message: string | null;
 }
 
-export default function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = use(params);
+export default function ProjectPage() {
+  const params = useParams();
+  const id = typeof params?.id === 'string' ? params.id : '';
   const [project, setProject] = useState<ProjectData | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'pipeline' | 'script' | 'storyboard'>('pipeline');
   const [isRefining, setIsRefining] = useState(false);
-  const supabase = createBrowserSupabaseClient();
-  const router = useRouter();
+  const supabase = useMemo(() => createBrowserSupabaseClient(), []);
 
   const {
     status: sseStatus,
@@ -52,16 +52,11 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     reset,
   } = useProjectStore();
 
-  useEffect(() => {
-    loadProject();
-    const cleanup = connectSSE(id);
-    return () => {
-      cleanup();
-      reset();
-    };
-  }, [id]);
-
-  const loadProject = async () => {
+  const loadProject = useCallback(async () => {
+    if (!id) {
+      setLoading(false);
+      return;
+    }
     const { data } = await supabase
       .from('projects')
       .select('*')
@@ -72,13 +67,28 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
       setProject(data as unknown as ProjectData);
     }
     setLoading(false);
-  };
+  }, [id, supabase]);
 
   useEffect(() => {
-    if (sseStatus === 'complete' || events.length > 0) {
-      loadProject();
+    if (!id) {
+      setLoading(false);
+      return;
     }
-  }, [sseStatus, events.length]);
+    setLoading(true);
+    void loadProject();
+    const cleanup = connectSSE(id);
+    return () => {
+      cleanup();
+      reset();
+    };
+  }, [id, loadProject, connectSSE, reset]);
+
+  useEffect(() => {
+    if (!id) return;
+    if (sseStatus === 'complete' || events.length > 0) {
+      void loadProject();
+    }
+  }, [id, sseStatus, events.length, loadProject]);
 
   const handleStart = async () => {
     try {
@@ -168,6 +178,19 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
       console.error('Save scene failed:', err);
     }
   };
+
+  if (!id) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-center space-y-4">
+          <p className="text-muted-foreground">Invalid project link</p>
+          <Link href="/dashboard">
+            <Button variant="outline">Back to Dashboard</Button>
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   if (loading) {
     return (
