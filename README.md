@@ -26,7 +26,7 @@ An AI-powered web application that generates science animation videos by analyzi
 
 ```bash
 git clone <repo-url>
-cd ai-science-video-generator
+cd <repository-root>   # e.g. Video-Studio or video-studio if that is the repo root
 npm install
 ```
 
@@ -43,11 +43,20 @@ Edit `.env` with your credentials:
 - **Required**: At least one AI provider key (e.g., `GOOGLE_AI_API_KEY`)
 - **Recommended**: `GCS_BUCKET_NAME`, `GCS_PROJECT_ID`, `GOOGLE_APPLICATION_CREDENTIALS`
 
+### 2.1 Before Uploading To GitHub
+
+- Keep secrets only in `.env` (this file is ignored by git).
+- Commit only `.env.example` with placeholders.
+- If any real key was ever exposed, rotate it before publishing:
+  - Supabase anon/service-role keys
+  - AI provider keys
+  - GCP service account key JSON
+
 ### 3. Set up Supabase
 
 ```bash
-# Install Supabase CLI
-npm install -g supabase
+# Install Supabase CLI (npm global install is not supported — use Homebrew on macOS)
+brew install supabase/tap/supabase
 
 # Link to your project
 supabase link --project-ref your-project-ref
@@ -56,7 +65,7 @@ supabase link --project-ref your-project-ref
 supabase db push
 ```
 
-Or manually run `supabase/migrations/001_initial.sql` in the Supabase SQL editor.
+Or manually run SQL files under `supabase/migrations/` (e.g. `001_initial.sql`, and any later files) in the Supabase SQL editor.
 
 ### 4. Set up Google Cloud Storage
 
@@ -81,6 +90,30 @@ npm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000).
+
+## Quality Gates
+
+Local verification:
+
+```bash
+npm run lint
+npm run test
+npm run build
+npm run test:e2e
+```
+
+Release governance:
+
+```bash
+npm run validate:release:staging
+npm run test:coverage
+PLAYWRIGHT_BASE_URL=https://staging.example.com npm run test:e2e:live
+```
+
+The repository also includes:
+- `CI` for pull request gates
+- `Release Governance` for staging / production readiness
+- `docs/release-readiness.md` for branch protection and environment setup
 
 ## Architecture
 
@@ -152,21 +185,48 @@ Users (Browser)
 
 ### Option A: Deploy to Vercel (Simplest)
 
-```bash
-# Install Vercel CLI
-npm install -g vercel
+This repo includes `vercel.json` (Next.js framework, `npm ci`, default region `iad1`). The production build uses `npm run build` from `package.json` (`next build --webpack`).
 
-# Deploy
+**1. Import the project**
+
+- Push this app to GitHub, then in [Vercel](https://vercel.com) choose **Add New → Project** and import the repository.
+- If the Next.js app lives in a subfolder of the repo, set **Root Directory** to that folder (e.g. `video-studio`).
+
+**2. Environment variables**
+
+In **Settings → Environment Variables**, add every key from `.env.example` for **Production** (and Preview if you want preview deployments to work).
+
+Important for production:
+
+- **`NEXT_PUBLIC_APP_URL`**: your live URL, e.g. `https://your-project.vercel.app` or your custom domain.
+- **`SUPABASE_SERVICE_ROLE_KEY`**, **`NEXT_PUBLIC_*` Supabase keys**: from the Supabase project dashboard (never commit these to git).
+- **`ENCRYPTION_KEY`**: generate with `openssl rand -hex 32`.
+- **GCS on Vercel**: `GOOGLE_APPLICATION_CREDENTIALS` is a filesystem path and is not ideal on serverless. Prefer injecting the service account JSON via a Vercel secret and a small bootstrap that writes a temp file, or use a supported GCP/Vercel integration—see [Google Cloud credentials](https://cloud.google.com/docs/authentication/application-default-credentials).
+
+**3. Supabase Auth**
+
+In Supabase **Authentication → URL Configuration**:
+
+- Set **Site URL** to the same URL as `NEXT_PUBLIC_APP_URL`.
+- Add **Redirect URLs**: your production URL and `https://your-project.vercel.app/**` (and preview URLs if needed).
+
+**4. Inngest**
+
+In [Inngest Cloud](https://app.inngest.com), point the app’s serve URL to:
+
+`https://<your-vercel-domain>/api/inngest`
+
+Use the **`INNGEST_SIGNING_KEY`** (and related keys) from the Inngest dashboard in Vercel env.
+
+**5. CLI deploy (optional)**
+
+```bash
+npm i -g vercel
 vercel --prod
 ```
 
-Then in the Vercel dashboard:
-1. Go to **Settings > Environment Variables**
-2. Add all variables from `.env.example`
-3. Redeploy
-
-**Pros**: Zero-config scaling, global CDN, automatic HTTPS
-**Cons**: Serverless function timeout (60s on Pro), may not suit long video renders
+**Pros**: Zero-config scaling, global CDN, automatic HTTPS  
+**Cons**: Serverless timeouts (Hobby is very short; **Pro** allows up to **60s** per function—this repo sets `maxDuration` on `/api/inngest` and `/api/sse`). Long **FFmpeg** renders may still need Docker or a worker outside Vercel—see Option B.
 
 ### Option B: Deploy with Docker (Full Control)
 

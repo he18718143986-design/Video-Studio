@@ -1,0 +1,129 @@
+name: Release Governance
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_environment:
+        description: Target GitHub environment
+        required: true
+        type: choice
+        default: staging
+        options:
+          - staging
+          - production
+      base_url:
+        description: Optional deployed app URL override
+        required: false
+        type: string
+      run_live_acceptance:
+        description: Run live Playwright acceptance against the deployed environment
+        required: true
+        type: boolean
+        default: true
+      start_pipeline:
+        description: Start the real pipeline during live acceptance
+        required: true
+        type: boolean
+        default: false
+
+jobs:
+  release-readiness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: ${{ inputs.target_environment }}
+    env:
+      TARGET_ENV: ${{ inputs.target_environment }}
+      REQUIRE_LIVE_ACCEPTANCE: ${{ inputs.run_live_acceptance && '1' || '0' }}
+      LIVE_START_PIPELINE: ${{ inputs.start_pipeline && '1' || '0' }}
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      NEXT_PUBLIC_APP_URL: ${{ vars.APP_BASE_URL }}
+      ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY }}
+      GOOGLE_AI_API_KEY: ${{ secrets.GOOGLE_AI_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+      STABILITY_API_KEY: ${{ secrets.STABILITY_API_KEY }}
+      KLING_API_KEY: ${{ secrets.KLING_API_KEY }}
+      RUNWAY_API_KEY: ${{ secrets.RUNWAY_API_KEY }}
+      GCS_BUCKET_NAME: ${{ secrets.GCS_BUCKET_NAME }}
+      GCS_PROJECT_ID: ${{ secrets.GCS_PROJECT_ID }}
+      GOOGLE_APPLICATION_CREDENTIALS: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}
+      INNGEST_EVENT_KEY: ${{ secrets.INNGEST_EVENT_KEY }}
+      INNGEST_SIGNING_KEY: ${{ secrets.INNGEST_SIGNING_KEY }}
+      UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
+      UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
+      LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+      LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+      E2E_OWNER_EMAIL: ${{ secrets.E2E_OWNER_EMAIL }}
+      E2E_OWNER_PASSWORD: ${{ secrets.E2E_OWNER_PASSWORD }}
+      E2E_NON_OWNER_EMAIL: ${{ secrets.E2E_NON_OWNER_EMAIL }}
+      E2E_NON_OWNER_PASSWORD: ${{ secrets.E2E_NON_OWNER_PASSWORD }}
+      LIVE_REFERENCE_VIDEO_URL: ${{ secrets.LIVE_REFERENCE_VIDEO_URL }}
+      LIVE_TEST_PROVIDER: ${{ secrets.LIVE_TEST_PROVIDER }}
+      LIVE_TEST_API_KEY: ${{ secrets.LIVE_TEST_API_KEY }}
+      NO_PROXY: 127.0.0.1,localhost
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Resolve live base URL
+        run: |
+          if [ -n "${{ inputs.base_url }}" ]; then
+            echo "PLAYWRIGHT_BASE_URL=${{ inputs.base_url }}" >> "$GITHUB_ENV"
+          elif [ -n "${NEXT_PUBLIC_APP_URL}" ]; then
+            echo "PLAYWRIGHT_BASE_URL=${NEXT_PUBLIC_APP_URL}" >> "$GITHUB_ENV"
+          fi
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate release environment
+        run: node ./scripts/validate-release-env.mjs
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+
+      - name: Unit + Integration Tests
+        run: npm run test
+
+      - name: Coverage
+        run: npm run test:coverage
+
+      - name: Install Playwright Browser
+        if: ${{ inputs.run_live_acceptance }}
+        run: npx playwright install --with-deps chromium
+
+      - name: Live health check
+        if: ${{ inputs.run_live_acceptance }}
+        run: npm run check:health:live
+
+      - name: Live acceptance
+        if: ${{ inputs.run_live_acceptance }}
+        run: npm run test:e2e:live
+
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage
+          if-no-files-found: ignore
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-release
+          path: playwright-report
+          if-no-files-found: ignore

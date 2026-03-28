@@ -1,0 +1,45 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "2.0"
+
+  inngest:
+    image: inngest/inngest:latest
+    ports:
+      - "8288:8288"
+    environment:
+      - INNGEST_EVENT_KEY=${INNGEST_EVENT_KEY:-local-dev-key}
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  redis_data:

@@ -1,0 +1,6 @@
+.playwright
+playwright-report
+test-results
+coverage
+test
+e2e

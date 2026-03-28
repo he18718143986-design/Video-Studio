@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:54321
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-anon-key
+      SUPABASE_SERVICE_ROLE_KEY: ci-service-role-key
+      ENCRYPTION_KEY: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      E2E_BYPASS_AUTH: "1"
+      E2E_BYPASS_GUARD: allow-non-production
+      NO_PROXY: 127.0.0.1,localhost
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+
+      - name: Unit + Integration Tests
+        run: npm run test
+
+      - name: Install Playwright Browser
+        run: npx playwright install --with-deps chromium
+
+      - name: E2E Smoke
+        run: npm run test:e2e
+
+      - name: Upload Playwright Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report
+          if-no-files-found: ignore
