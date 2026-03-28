@@ -14,9 +14,9 @@ import { createBrowserSupabaseClient } from '@/lib/supabase';
 
 const AUTH_TIMEOUT_MS = 20_000;
 const PROJECT_INSERT_TIMEOUT_MS = 20_000;
-const MIN_UPLOAD_TIMEOUT_MS = 60_000;
-const MAX_UPLOAD_TIMEOUT_MS = 10 * 60_000;
-const UPLOAD_TIMEOUT_PER_MB_MS = 1_500;
+const MIN_UPLOAD_TIMEOUT_MS = 2 * 60_000;
+const MAX_UPLOAD_TIMEOUT_MS = 30 * 60_000;
+const UPLOAD_TIMEOUT_PER_MB_MS = 10_000;
 const DEFAULT_STORAGE_BUCKET = 'videos';
 const STORAGE_BUCKET = process.env.NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET?.trim() || DEFAULT_STORAGE_BUCKET;
 const EXTENSION_TO_MIME: Record<string, string> = {
@@ -216,6 +216,12 @@ export default function NewProjectPage() {
       setCreating(false);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      if (message.toLowerCase().includes('video upload timed out')) {
+        setError(`Create project failed: ${message}. Upload may be slow on current network. Try a smaller video first (e.g. <50MB) or retry on a faster connection.`);
+        setCreatingStage('');
+        setCreating(false);
+        return;
+      }
       setError(`Create project failed: ${message}`);
       setCreatingStage('');
       setCreating(false);
