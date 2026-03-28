@@ -99,6 +99,7 @@ Local verification:
 npm run lint
 npm run test
 npm run build
+npm run check:secrets
 npm run test:e2e
 ```
 

@@ -13,6 +13,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "check:secrets": "bash ./scripts/check-secrets.sh",
     "test:e2e": "NO_PROXY=127.0.0.1,localhost playwright test --grep @smoke",
     "test:e2e:all": "NO_PROXY=127.0.0.1,localhost playwright test --grep-invert @live",
     "test:e2e:live": "PLAYWRIGHT_LIVE=1 NO_PROXY=127.0.0.1,localhost playwright test --grep @live",
