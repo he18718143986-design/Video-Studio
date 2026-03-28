@@ -41,6 +41,7 @@ Edit `.env` with your credentials:
 - **Required**: `ENCRYPTION_KEY` (generate with `openssl rand -hex 32`)
 - **Required**: At least one AI provider key (e.g., `GOOGLE_AI_API_KEY`)
 - **Recommended**: `SUPABASE_STORAGE_BUCKET` (defaults to `videos`)
+- **Optional (custom bucket only)**: `NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET` (set same value as `SUPABASE_STORAGE_BUCKET`)
 
 ### 2.1 Before Uploading To GitHub
 
@@ -196,6 +197,7 @@ Important for production:
 - **`SUPABASE_SERVICE_ROLE_KEY`**, **`NEXT_PUBLIC_*` Supabase keys**: from the Supabase project dashboard (never commit these to git).
 - **`ENCRYPTION_KEY`**: generate with `openssl rand -hex 32`.
 - **`SUPABASE_STORAGE_BUCKET`** (optional): set only if you use a bucket name other than `videos`.
+- **`NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET`** (optional): only needed when upload page should use a custom bucket name. Keep it equal to `SUPABASE_STORAGE_BUCKET`.
 
 **3. Supabase Auth**
 

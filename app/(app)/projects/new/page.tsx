@@ -17,6 +17,14 @@ const PROJECT_INSERT_TIMEOUT_MS = 20_000;
 const MIN_UPLOAD_TIMEOUT_MS = 60_000;
 const MAX_UPLOAD_TIMEOUT_MS = 10 * 60_000;
 const UPLOAD_TIMEOUT_PER_MB_MS = 1_500;
+const DEFAULT_STORAGE_BUCKET = 'videos';
+const STORAGE_BUCKET = process.env.NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET?.trim() || DEFAULT_STORAGE_BUCKET;
+const EXTENSION_TO_MIME: Record<string, string> = {
+  mp4: 'video/mp4',
+  m4v: 'video/mp4',
+  webm: 'video/webm',
+  mov: 'video/quicktime',
+};
 
 function withTimeout<T>(promise: PromiseLike<T>, label: string, timeoutMs: number): Promise<T> {
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -36,6 +44,20 @@ function withTimeout<T>(promise: PromiseLike<T>, label: string, timeoutMs: numbe
 function getUploadTimeoutMs(file: File): number {
   const estimated = Math.ceil(file.size / (1024 * 1024)) * UPLOAD_TIMEOUT_PER_MB_MS;
   return Math.min(MAX_UPLOAD_TIMEOUT_MS, Math.max(MIN_UPLOAD_TIMEOUT_MS, estimated));
+}
+
+function getUploadMimeType(file: File): string | null {
+  const browserDetected = file.type?.trim().toLowerCase();
+  if (browserDetected === 'video/mp4' || browserDetected === 'video/webm' || browserDetected === 'video/quicktime') {
+    return browserDetected;
+  }
+
+  const extension = file.name.split('.').pop()?.toLowerCase();
+  if (extension && EXTENSION_TO_MIME[extension]) {
+    return EXTENSION_TO_MIME[extension];
+  }
+
+  return null;
 }
 
 function sanitizeFileName(fileName: string): string {
@@ -79,8 +101,17 @@ export default function NewProjectPage() {
     if (file) {
       if (file.size > 500 * 1024 * 1024) {
         setError('File size exceeds 500MB limit');
+        setVideoFile(null);
         return;
       }
+
+      const mimeType = getUploadMimeType(file);
+      if (!mimeType) {
+        setError('Unsupported file type. Please upload MP4, MOV, or WebM.');
+        setVideoFile(null);
+        return;
+      }
+
       setVideoFile(file);
       setError(null);
     }
@@ -107,14 +138,22 @@ export default function NewProjectPage() {
       let referenceVideoUrl = videoUrl || null;
 
       if (videoFile) {
+        const uploadMimeType = getUploadMimeType(videoFile);
+        if (!uploadMimeType) {
+          setError('Unsupported file type. Please upload MP4, MOV, or WebM.');
+          setCreatingStage('');
+          setCreating(false);
+          return;
+        }
+
         setCreatingStage('Uploading reference video...');
         const safeFileName = sanitizeFileName(videoFile.name);
         const filePath = `uploads/${user.id}/${Date.now()}_${safeFileName}`;
         const { error: uploadError } = await withTimeout(
           supabase.storage
-            .from('videos')
+            .from(STORAGE_BUCKET)
             .upload(filePath, videoFile, {
-              contentType: videoFile.type || 'application/octet-stream',
+              contentType: uploadMimeType,
               upsert: false,
             }),
           'Video upload',
@@ -130,7 +169,7 @@ export default function NewProjectPage() {
             || lowerMessage.includes('mime')
             || lowerMessage.includes('bad request')
           )
-            ? ' Check Supabase Storage: bucket "videos", mime types, and storage RLS policies.'
+            ? ` Check Supabase Storage: bucket "${STORAGE_BUCKET}", mime types, and storage RLS policies.`
             : '';
           setError(`Upload failed: ${uploadError.message}.${storageHint}`);
           setCreatingStage('');
@@ -138,7 +177,7 @@ export default function NewProjectPage() {
           return;
         }
 
-        const { data: urlData } = supabase.storage.from('videos').getPublicUrl(filePath);
+        const { data: urlData } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(filePath);
         referenceVideoUrl = urlData.publicUrl;
       }
 
