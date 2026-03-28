@@ -46,8 +46,6 @@ Environment secrets:
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `ENCRYPTION_KEY`
 - `GOOGLE_AI_API_KEY` or another supported provider key
-- `GCS_BUCKET_NAME`
-- `GCS_PROJECT_ID`
 - `INNGEST_EVENT_KEY`
 - `INNGEST_SIGNING_KEY`
 
@@ -56,7 +54,7 @@ Recommended secrets:
 - `UPSTASH_REDIS_REST_TOKEN`
 - `LANGFUSE_PUBLIC_KEY`
 - `LANGFUSE_SECRET_KEY`
-- `GOOGLE_APPLICATION_CREDENTIALS`
+- `SUPABASE_STORAGE_BUCKET` (only if you don't use the default `videos` bucket)
 
 Live acceptance secrets:
 - `E2E_OWNER_EMAIL`

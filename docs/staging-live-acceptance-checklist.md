@@ -34,8 +34,6 @@ Required application secrets:
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `ENCRYPTION_KEY`
-- `GCS_BUCKET_NAME`
-- `GCS_PROJECT_ID`
 - `INNGEST_EVENT_KEY`
 - `INNGEST_SIGNING_KEY`
 
@@ -62,7 +60,7 @@ Recommended observability / infra secrets:
 - `UPSTASH_REDIS_REST_TOKEN`
 - `LANGFUSE_PUBLIC_KEY`
 - `LANGFUSE_SECRET_KEY`
-- `GOOGLE_APPLICATION_CREDENTIALS`
+- `SUPABASE_STORAGE_BUCKET` (only if you don't use the default `videos` bucket)
 
 ## 4. Staging Variables Checklist
 

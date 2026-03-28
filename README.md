@@ -17,7 +17,6 @@ An AI-powered web application that generates science animation videos by analyzi
 - Node.js 18+
 - FFmpeg (for video rendering)
 - Supabase account (database + auth)
-- Google Cloud Storage bucket
 - At least one AI provider API key (Google AI recommended)
 
 ## Quick Start
@@ -41,7 +40,7 @@ Edit `.env` with your credentials:
 - **Required**: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`
 - **Required**: `ENCRYPTION_KEY` (generate with `openssl rand -hex 32`)
 - **Required**: At least one AI provider key (e.g., `GOOGLE_AI_API_KEY`)
-- **Recommended**: `GCS_BUCKET_NAME`, `GCS_PROJECT_ID`, `GOOGLE_APPLICATION_CREDENTIALS`
+- **Recommended**: `SUPABASE_STORAGE_BUCKET` (defaults to `videos`)
 
 ### 2.1 Before Uploading To GitHub
 
@@ -67,15 +66,9 @@ supabase db push
 
 Or manually run SQL files under `supabase/migrations/` (e.g. `001_initial.sql`, and any later files) in the Supabase SQL editor.
 
-### 4. Set up Google Cloud Storage
+### 4. Set up Supabase Storage Bucket
 
-```bash
-# Create bucket
-gsutil mb -l us-central1 gs://your-bucket-name
-
-# Set CORS for browser access
-gsutil cors set cors.json gs://your-bucket-name
-```
+Ensure migration `002_storage_uploads.sql` is applied (via `supabase db push`) so bucket `videos` and its policies exist.
 
 ### 5. Start Inngest dev server
 
@@ -142,7 +135,7 @@ The repository also includes:
 - **Frontend**: Next.js 14, Tailwind CSS, shadcn/ui, Zustand, Video.js
 - **Backend**: tRPC v11, Inngest, BullMQ
 - **Database**: PostgreSQL (Supabase)
-- **Storage**: Google Cloud Storage
+- **Storage**: Supabase Storage
 - **AI**: Gemini, GPT-4o, Claude, ElevenLabs, Veo, Kling, Runway
 
 ### Project Structure
@@ -178,7 +171,7 @@ Users (Browser)
 │  (Next.js)   │     └───────────────┘
 └──────┬───────┘
        │
-       ├────▶ Google Cloud Storage (assets)
+       ├────▶ Supabase Storage (assets)
        ├────▶ Inngest Cloud (workflow)
        ├────▶ Google AI / OpenAI / Anthropic (AI)
        └────▶ Langfuse (observability)
@@ -202,7 +195,7 @@ Important for production:
 - **`NEXT_PUBLIC_APP_URL`**: your live URL, e.g. `https://your-project.vercel.app` or your custom domain.
 - **`SUPABASE_SERVICE_ROLE_KEY`**, **`NEXT_PUBLIC_*` Supabase keys**: from the Supabase project dashboard (never commit these to git).
 - **`ENCRYPTION_KEY`**: generate with `openssl rand -hex 32`.
-- **GCS on Vercel**: `GOOGLE_APPLICATION_CREDENTIALS` is a filesystem path and is not ideal on serverless. Prefer injecting the service account JSON via a Vercel secret and a small bootstrap that writes a temp file, or use a supported GCP/Vercel integration—see [Google Cloud credentials](https://cloud.google.com/docs/authentication/application-default-credentials).
+- **`SUPABASE_STORAGE_BUCKET`** (optional): set only if you use a bucket name other than `videos`.
 
 **3. Supabase Auth**
 

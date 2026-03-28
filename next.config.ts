@@ -32,7 +32,7 @@ const nextConfig: NextConfig = {
   },
   allowedDevOrigins: allowedDevOrigins.length > 0 ? allowedDevOrigins : undefined,
 
-  serverExternalPackages: ['fluent-ffmpeg', '@google-cloud/storage'],
+  serverExternalPackages: ['fluent-ffmpeg'],
 
   images: {
     remotePatterns: [

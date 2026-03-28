@@ -30,7 +30,11 @@ set
   file_size_limit = excluded.file_size_limit,
   allowed_mime_types = excluded.allowed_mime_types;
 
-alter table storage.objects enable row level security;
+-- NOTE:
+-- On hosted Supabase, migration role may not own storage.objects.
+-- Avoid ALTER TABLE ... ENABLE ROW LEVEL SECURITY here to prevent:
+--   ERROR: must be owner of table objects (SQLSTATE 42501)
+-- storage.objects is managed by Supabase storage service and already RLS-protected.
 
 drop policy if exists "videos_public_read" on storage.objects;
 create policy "videos_public_read"

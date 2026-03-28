@@ -122,8 +122,6 @@ requireEnv('NEXT_PUBLIC_SUPABASE_URL', 'Supabase browser client requires it.');
 requireEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY', 'Supabase browser client requires it.');
 requireEnv('SUPABASE_SERVICE_ROLE_KEY', 'Server-side routers and admin actions require it.');
 requireEnv('NEXT_PUBLIC_APP_URL', 'Generated links and release checks rely on it.');
-requireEnv('GCS_BUCKET_NAME', 'Video assets and generated media are stored in GCS.');
-requireEnv('GCS_PROJECT_ID', 'GCS client configuration requires it.');
 requireEnv('INNGEST_EVENT_KEY', 'Pipeline orchestration requires Inngest.');
 requireEnv('INNGEST_SIGNING_KEY', 'Pipeline orchestration requires Inngest.');
 
@@ -134,7 +132,7 @@ checkRedisPair();
 checkLangfuse();
 checkE2EBypass();
 checkLiveAcceptanceInputs();
-warnIfMissing('GOOGLE_APPLICATION_CREDENTIALS', 'Set this unless your runtime uses workload identity or equivalent.');
+warnIfMissing('SUPABASE_STORAGE_BUCKET', 'Defaults to "videos" when omitted. Set it only if you use a custom bucket.');
 
 const configuredProviders = providerKeys.filter(hasEnv);
 
