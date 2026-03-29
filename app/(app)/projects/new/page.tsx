@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
@@ -8,18 +8,21 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Progress } from '@/components/ui/progress';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Sparkles, Upload, ArrowLeft, ArrowRight, Loader2, Globe } from 'lucide-react';
+import { Upload as TusUpload } from 'tus-js-client';
 import { createBrowserSupabaseClient } from '@/lib/supabase';
 
 const AUTH_TIMEOUT_MS = 20_000;
 const PROJECT_INSERT_TIMEOUT_MS = 20_000;
-const MIN_UPLOAD_TIMEOUT_MS = 2 * 60_000;
-const MAX_UPLOAD_TIMEOUT_MS = 30 * 60_000;
-const UPLOAD_TIMEOUT_PER_MB_MS = 10_000;
 const DEFAULT_MAX_UPLOAD_SIZE_MB = 500;
 const DEFAULT_STORAGE_BUCKET = 'videos';
 const STORAGE_BUCKET = process.env.NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET?.trim() || DEFAULT_STORAGE_BUCKET;
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
+const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim();
+const TUS_CHUNK_SIZE_BYTES = 6 * 1024 * 1024;
+const TUS_RETRY_DELAYS_MS = [0, 3000, 5000, 10000, 20000];
 const parsedMaxUploadSizeMb = Number.parseInt(process.env.NEXT_PUBLIC_MAX_UPLOAD_SIZE_MB ?? '', 10);
 const MAX_UPLOAD_SIZE_MB = Number.isFinite(parsedMaxUploadSizeMb) && parsedMaxUploadSizeMb > 0
   ? parsedMaxUploadSizeMb
@@ -45,11 +48,6 @@ function withTimeout<T>(promise: PromiseLike<T>, label: string, timeoutMs: numbe
   return Promise.race([operationPromise, timeoutPromise]).finally(() => {
     if (timeoutId) clearTimeout(timeoutId);
   });
-}
-
-function getUploadTimeoutMs(file: File): number {
-  const estimated = Math.ceil(file.size / (1024 * 1024)) * UPLOAD_TIMEOUT_PER_MB_MS;
-  return Math.min(MAX_UPLOAD_TIMEOUT_MS, Math.max(MIN_UPLOAD_TIMEOUT_MS, estimated));
 }
 
 function getUploadMimeType(file: File): string | null {
@@ -84,6 +82,95 @@ function sanitizeFileName(fileName: string): string {
   return `${safeBase}${safeExtension}`;
 }
 
+function formatMegabytes(bytes: number): string {
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatEta(seconds: number): string {
+  const safeSeconds = Math.max(0, Math.floor(seconds));
+  const hours = Math.floor(safeSeconds / 3600);
+  const minutes = Math.floor((safeSeconds % 3600) / 60);
+  const remainingSeconds = safeSeconds % 60;
+
+  if (hours > 0) {
+    return `${hours}h ${minutes}m ${remainingSeconds}s`;
+  }
+  if (minutes > 0) {
+    return `${minutes}m ${remainingSeconds}s`;
+  }
+  return `${remainingSeconds}s`;
+}
+
+function getTusEndpointFromSupabaseUrl(url: string): string {
+  const parsed = new URL(url);
+  const storageHost = parsed.hostname.endsWith('.supabase.co')
+    ? parsed.hostname.replace(/\.supabase\.co$/, '.storage.supabase.co')
+    : parsed.hostname;
+  return `${parsed.protocol}//${storageHost}/storage/v1/upload/resumable`;
+}
+
+function uploadFileWithTus(params: {
+  accessToken: string;
+  bucketName: string;
+  objectName: string;
+  file: File;
+  contentType: string;
+  onProgress: (progress: { percent: number; bytesUploaded: number; bytesTotal: number }) => void;
+  onUploadCreated?: (upload: TusUpload) => void;
+}): Promise<void> {
+  const { accessToken, bucketName, objectName, file, contentType, onProgress, onUploadCreated } = params;
+
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    return Promise.reject(new Error('Supabase public environment variables are missing.'));
+  }
+
+  return new Promise((resolve, reject) => {
+    const upload = new TusUpload(file, {
+      endpoint: getTusEndpointFromSupabaseUrl(SUPABASE_URL),
+      retryDelays: TUS_RETRY_DELAYS_MS,
+      uploadDataDuringCreation: true,
+      removeFingerprintOnSuccess: true,
+      chunkSize: TUS_CHUNK_SIZE_BYTES,
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+        apikey: SUPABASE_ANON_KEY,
+        'x-upsert': 'false',
+      },
+      metadata: {
+        bucketName,
+        objectName,
+        contentType,
+        cacheControl: '3600',
+      },
+      onError(error) {
+        reject(error);
+      },
+      onProgress(bytesUploaded, bytesTotal) {
+        if (bytesTotal <= 0) return;
+        onProgress({
+          percent: Math.round((bytesUploaded / bytesTotal) * 100),
+          bytesUploaded,
+          bytesTotal,
+        });
+      },
+      onSuccess() {
+        resolve();
+      },
+    });
+    onUploadCreated?.(upload);
+
+    upload.findPreviousUploads()
+      .then((previousUploads) => {
+        const previousUpload = previousUploads[0];
+        if (previousUpload) {
+          upload.resumeFromPreviousUpload(previousUpload);
+        }
+        upload.start();
+      })
+      .catch(reject);
+  });
+}
+
 export default function NewProjectPage() {
   const [step, setStep] = useState(1);
   const [videoFile, setVideoFile] = useState<File | null>(null);
@@ -97,10 +184,46 @@ export default function NewProjectPage() {
   const [language, setLanguage] = useState('auto');
   const [creating, setCreating] = useState(false);
   const [creatingStage, setCreatingStage] = useState('');
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadBytesUploaded, setUploadBytesUploaded] = useState(0);
+  const [uploadBytesTotal, setUploadBytesTotal] = useState(0);
+  const [uploadEtaSeconds, setUploadEtaSeconds] = useState<number | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [isCancellingUpload, setIsCancellingUpload] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const activeUploadRef = useRef<TusUpload | null>(null);
+  const cancelUploadRef = useRef<(() => void) | null>(null);
+  const uploadCancelledRef = useRef(false);
+  const uploadStartedAtRef = useRef<number | null>(null);
 
   const router = useRouter();
   const supabase = useMemo(() => createBrowserSupabaseClient(), []);
+
+  const resetUploadState = () => {
+    activeUploadRef.current = null;
+    cancelUploadRef.current = null;
+    uploadCancelledRef.current = false;
+    uploadStartedAtRef.current = null;
+    setIsUploading(false);
+    setIsCancellingUpload(false);
+    setUploadProgress(0);
+    setUploadBytesUploaded(0);
+    setUploadBytesTotal(0);
+    setUploadEtaSeconds(null);
+  };
+
+  const handleCancelUpload = async () => {
+    if (!activeUploadRef.current || !isUploading) return;
+    uploadCancelledRef.current = true;
+    setIsCancellingUpload(true);
+    setCreatingStage('Cancelling upload...');
+    cancelUploadRef.current?.();
+    try {
+      await activeUploadRef.current.abort(true);
+    } catch {
+      // Ignore abort errors; upload flow handles cancellation state.
+    }
+  };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -152,25 +275,93 @@ export default function NewProjectPage() {
           return;
         }
 
-        setCreatingStage('Uploading reference video...');
+        const { data: sessionData, error: sessionError } = await withTimeout(
+          supabase.auth.getSession(),
+          'Session check',
+          AUTH_TIMEOUT_MS
+        );
+        const accessToken = sessionData.session?.access_token;
+        if (sessionError || !accessToken) {
+          setError('Upload failed: missing active session. Please log in again.');
+          setCreatingStage('');
+          setCreating(false);
+          return;
+        }
+
+        setCreatingStage('Uploading reference video... 0%');
+        setIsUploading(true);
+        setUploadProgress(0);
+        setUploadBytesUploaded(0);
+        setUploadBytesTotal(videoFile.size);
+        setUploadEtaSeconds(null);
+        uploadStartedAtRef.current = Date.now();
         const safeFileName = sanitizeFileName(videoFile.name);
         const filePath = `uploads/${user.id}/${Date.now()}_${safeFileName}`;
-        const { error: uploadError } = await withTimeout(
-          supabase.storage
-            .from(STORAGE_BUCKET)
-            .upload(filePath, videoFile, {
-              contentType: uploadMimeType,
-              upsert: false,
-            }),
-          'Video upload',
-          getUploadTimeoutMs(videoFile)
-        );
+        let lastProgress = -1;
+        const cancellationPromise = new Promise<void>((_resolve, reject) => {
+          cancelUploadRef.current = () => reject(new Error('Upload cancelled by user.'));
+        });
 
-        if (uploadError) {
-          const lowerMessage = uploadError.message.toLowerCase();
+        try {
+          await Promise.race([
+            uploadFileWithTus({
+              accessToken,
+              bucketName: STORAGE_BUCKET,
+              objectName: filePath,
+              file: videoFile,
+              contentType: uploadMimeType,
+              onUploadCreated: (upload) => {
+                activeUploadRef.current = upload;
+              },
+              onProgress: ({ percent, bytesUploaded, bytesTotal }) => {
+                if (percent !== lastProgress) {
+                  lastProgress = percent;
+                  setUploadProgress(percent);
+                  setCreatingStage(`Uploading reference video... ${percent}%`);
+                }
+
+                setUploadBytesUploaded(bytesUploaded);
+                setUploadBytesTotal(bytesTotal);
+
+                const startedAt = uploadStartedAtRef.current;
+                if (!startedAt || bytesUploaded <= 0) {
+                  setUploadEtaSeconds(null);
+                  return;
+                }
+
+                const elapsedSeconds = (Date.now() - startedAt) / 1000;
+                if (elapsedSeconds <= 0) {
+                  setUploadEtaSeconds(null);
+                  return;
+                }
+
+                const bytesPerSecond = bytesUploaded / elapsedSeconds;
+                if (bytesPerSecond <= 0) {
+                  setUploadEtaSeconds(null);
+                  return;
+                }
+
+                const remainingBytes = Math.max(0, bytesTotal - bytesUploaded);
+                const etaSeconds = Math.ceil(remainingBytes / bytesPerSecond);
+                setUploadEtaSeconds(etaSeconds);
+              },
+            }),
+            cancellationPromise,
+          ]);
+        } catch (uploadError) {
+          const uploadMessage = uploadError instanceof Error ? uploadError.message : String(uploadError);
+          const lowerMessage = uploadMessage.toLowerCase();
+          const wasCancelled = uploadCancelledRef.current || lowerMessage.includes('cancelled');
+          resetUploadState();
+          if (wasCancelled) {
+            setError('Upload cancelled. You can select another file and retry.');
+            setCreatingStage('');
+            setCreating(false);
+            return;
+          }
           if (lowerMessage.includes('maximum allowed size')) {
             setError(
-              `Upload failed: ${uploadError.message}. ` +
+              `Upload failed: ${uploadMessage}. ` +
               `Supabase bucket "${STORAGE_BUCKET}" file size limit is smaller than your file. ` +
               'Upload a smaller file or increase Storage bucket file size limit.'
             );
@@ -187,11 +378,12 @@ export default function NewProjectPage() {
           )
             ? ` Check Supabase Storage: bucket "${STORAGE_BUCKET}", mime types, and storage RLS policies.`
             : '';
-          setError(`Upload failed: ${uploadError.message}.${storageHint}`);
+          setError(`Upload failed: ${uploadMessage}.${storageHint}`);
           setCreatingStage('');
           setCreating(false);
           return;
         }
+        resetUploadState();
 
         const { data: urlData } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(filePath);
         referenceVideoUrl = urlData.publicUrl;
@@ -232,6 +424,7 @@ export default function NewProjectPage() {
       setCreating(false);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      resetUploadState();
       if (message.toLowerCase().includes('video upload timed out')) {
         setError(`Create project failed: ${message}. Upload may be slow on current network. Try a smaller video first (e.g. <50MB) or retry on a faster connection.`);
         setCreatingStage('');
@@ -477,7 +670,29 @@ export default function NewProjectPage() {
                   )}
                 </Button>
               </div>
-              {creating && creatingStage ? (
+              {creating && isUploading ? (
+                <div className="space-y-2">
+                  <Progress value={uploadProgress} />
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-xs text-muted-foreground">
+                      {creatingStage || `Uploading reference video... ${uploadProgress}%`}
+                    </p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={handleCancelUpload}
+                      disabled={isCancellingUpload}
+                    >
+                      {isCancellingUpload ? 'Cancelling...' : 'Cancel Upload'}
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {formatMegabytes(uploadBytesUploaded)} / {formatMegabytes(uploadBytesTotal)}
+                    {uploadEtaSeconds !== null ? ` · ETA ${formatEta(uploadEtaSeconds)}` : ''}
+                  </p>
+                </div>
+              ) : creating && creatingStage ? (
                 <p className="text-xs text-muted-foreground">{creatingStage}</p>
               ) : null}
             </CardContent>

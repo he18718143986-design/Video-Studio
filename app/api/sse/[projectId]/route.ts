@@ -58,11 +58,42 @@ export async function GET(
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     async start(controller) {
+      let pollInterval: ReturnType<typeof setInterval> | null = null;
+      let streamRotateTimer: ReturnType<typeof setTimeout> | null = null;
+      let channel: ReturnType<typeof supabaseAdmin.channel> | null = null;
+      let closed = false;
+
       const sendEvent = (data: unknown) => {
         try {
           controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
         } catch {
           // Stream may be closed
+        }
+      };
+
+      const cleanup = () => {
+        if (closed) return;
+        closed = true;
+
+        if (pollInterval) {
+          clearInterval(pollInterval);
+          pollInterval = null;
+        }
+
+        if (streamRotateTimer) {
+          clearTimeout(streamRotateTimer);
+          streamRotateTimer = null;
+        }
+
+        if (channel) {
+          void channel.unsubscribe();
+          channel = null;
+        }
+
+        try {
+          controller.close();
+        } catch {
+          // Stream may already be closed
         }
       };
 
@@ -104,7 +135,7 @@ export async function GET(
           },
         });
 
-        const channel = supabaseAdmin
+        channel = supabaseAdmin
           .channel(`pipeline-events-${projectId}`)
           .on(
             'postgres_changes',
@@ -155,7 +186,7 @@ export async function GET(
           )
           .subscribe();
 
-        const pollInterval = setInterval(async () => {
+        pollInterval = setInterval(async () => {
           const { data: latestProject } = await supabaseAdmin
             .from('projects')
             .select('status, current_step, total_cost_usd, final_video_url')
@@ -176,14 +207,16 @@ export async function GET(
           }
         }, 5000);
 
-        request.signal.addEventListener('abort', () => {
-          clearInterval(pollInterval);
-          channel.unsubscribe();
-          controller.close();
-        });
+        // Vercel may hard-stop long-running connections near maxDuration.
+        // Rotate the stream slightly earlier to reconnect cleanly on the client.
+        streamRotateTimer = setTimeout(() => {
+          cleanup();
+        }, 55_000);
+
+        request.signal.addEventListener('abort', cleanup);
       } catch (error) {
         sendEvent({ type: 'error', data: { message: String(error) } });
-        controller.close();
+        cleanup();
       }
     },
   });
