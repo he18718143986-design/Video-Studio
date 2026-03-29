@@ -42,6 +42,7 @@ Edit `.env` with your credentials:
 - **Required**: At least one AI provider key (e.g., `GOOGLE_AI_API_KEY`)
 - **Recommended**: `SUPABASE_STORAGE_BUCKET` (defaults to `videos`)
 - **Optional (custom bucket only)**: `NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET` (set same value as `SUPABASE_STORAGE_BUCKET`)
+- **Optional**: `NEXT_PUBLIC_MAX_UPLOAD_SIZE_MB` (default `500`; keep consistent with Supabase bucket file size limit)
 
 ### 2.1 Before Uploading To GitHub
 

@@ -17,8 +17,14 @@ const PROJECT_INSERT_TIMEOUT_MS = 20_000;
 const MIN_UPLOAD_TIMEOUT_MS = 2 * 60_000;
 const MAX_UPLOAD_TIMEOUT_MS = 30 * 60_000;
 const UPLOAD_TIMEOUT_PER_MB_MS = 10_000;
+const DEFAULT_MAX_UPLOAD_SIZE_MB = 500;
 const DEFAULT_STORAGE_BUCKET = 'videos';
 const STORAGE_BUCKET = process.env.NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET?.trim() || DEFAULT_STORAGE_BUCKET;
+const parsedMaxUploadSizeMb = Number.parseInt(process.env.NEXT_PUBLIC_MAX_UPLOAD_SIZE_MB ?? '', 10);
+const MAX_UPLOAD_SIZE_MB = Number.isFinite(parsedMaxUploadSizeMb) && parsedMaxUploadSizeMb > 0
+  ? parsedMaxUploadSizeMb
+  : DEFAULT_MAX_UPLOAD_SIZE_MB;
+const MAX_UPLOAD_SIZE_BYTES = MAX_UPLOAD_SIZE_MB * 1024 * 1024;
 const EXTENSION_TO_MIME: Record<string, string> = {
   mp4: 'video/mp4',
   m4v: 'video/mp4',
@@ -99,8 +105,8 @@ export default function NewProjectPage() {
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      if (file.size > 500 * 1024 * 1024) {
-        setError('File size exceeds 500MB limit');
+      if (file.size > MAX_UPLOAD_SIZE_BYTES) {
+        setError(`File size exceeds ${MAX_UPLOAD_SIZE_MB}MB limit`);
         setVideoFile(null);
         return;
       }
@@ -162,6 +168,16 @@ export default function NewProjectPage() {
 
         if (uploadError) {
           const lowerMessage = uploadError.message.toLowerCase();
+          if (lowerMessage.includes('maximum allowed size')) {
+            setError(
+              `Upload failed: ${uploadError.message}. ` +
+              `Supabase bucket "${STORAGE_BUCKET}" file size limit is smaller than your file. ` +
+              'Upload a smaller file or increase Storage bucket file size limit.'
+            );
+            setCreatingStage('');
+            setCreating(false);
+            return;
+          }
           const storageHint = (
             lowerMessage.includes('bucket')
             || lowerMessage.includes('policy')
@@ -324,7 +340,9 @@ export default function NewProjectPage() {
                       <p className="text-sm text-muted-foreground">
                         {videoFile ? videoFile.name : 'Click to upload or drag and drop'}
                       </p>
-                      <p className="text-xs text-muted-foreground">Max 500MB. MP4, MOV, WebM supported.</p>
+                      <p className="text-xs text-muted-foreground">
+                        Max {MAX_UPLOAD_SIZE_MB}MB. MP4, MOV, WebM supported.
+                      </p>
                     </label>
                   </div>
                 </div>

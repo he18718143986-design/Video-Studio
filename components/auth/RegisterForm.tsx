@@ -152,6 +152,7 @@ export function RegisterForm() {
               placeholder="Your Name"
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
+              autoComplete="name"
               required
             />
           </div>
@@ -164,6 +165,7 @@ export function RegisterForm() {
               placeholder="you@example.com"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
+              autoComplete="email"
               required
             />
           </div>
